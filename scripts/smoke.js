@@ -45,13 +45,31 @@ async function main() {
   ok('positions', fastIntent('positions').action === 'positions');
   ok('results', fastIntent('results').action === 'results');
   ok('free chat -> null', fastIntent('hey how are you') === null);
+  ok('prediction question -> analyze', fastIntent('will Argentina win the World Cup?').action === 'analyze');
 
-  console.log('4. minimax sanitizer');
+  console.log('4. Telegram context helpers');
+  const { buildMessageContext, stripBotMention } = require('../src/bot');
+  ok('strips bot mention', stripBotMention('@PolyEdgeMoneyBot analyze this', 'PolyEdgeMoneyBot').trim() === 'analyze this');
+  const replyCtx = buildMessageContext({
+    me: { username: 'PolyEdgeMoneyBot' },
+    message: {
+      text: 'analyze this',
+      reply_to_message: { text: 'https://polymarket.com/market/will-argentina-win-the-2026-fifa-world-cup-245' },
+    },
+  });
+  ok('reply context includes quoted link', /Telegram reply context/.test(replyCtx) && /polymarket\.com/.test(replyCtx));
+  const shortReplyCtx = buildMessageContext({
+    me: { username: 'PolyEdgeMoneyBot' },
+    message: { text: 'why?', reply_to_message: { text: '📊 <b>Will Argentina win?</b>' } },
+  });
+  ok('short reply uses quoted text', /Will Argentina win/.test(shortReplyCtx));
+
+  console.log('5. minimax sanitizer');
   const { sanitizeAssistantText } = require('../src/llm/minimax');
   ok('strips <think>', sanitizeAssistantText('<think>secret</think>Hello') === 'Hello');
   ok('strips unterminated think', sanitizeAssistantText('<think>oops no close') === '');
 
-  console.log('5. polymarket client (live)');
+  console.log('6. polymarket client (live)');
   const pm = require('../src/polymarket/client');
   const markets = await pm.getTrendingMarkets(5);
   ok('trending markets fetched', markets.length > 0);
@@ -66,7 +84,7 @@ async function main() {
   const arg = await pm.searchMarkets('will argentina win the world cup', 5);
   ok('search ranks by relevance', arg.length === 0 || /argentina/i.test(arg[0].question));
 
-  console.log('6. render');
+  console.log('7. render');
   const render = require('../src/render');
   const list = render.renderMarketList(markets);
   ok('market list renders', list.includes('1.'));
