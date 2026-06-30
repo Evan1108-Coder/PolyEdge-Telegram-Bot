@@ -49,6 +49,14 @@ function fastIntent(text) {
   const an = t.match(/^\/?(?:analyze|analyse|decide|should i buy|rate)\s+(.{3,})$/i);
   if (an) return { action: 'analyze', reference: an[1].trim() };
 
+  // Prediction-style natural language is PolyEdge's core job. Route it to
+  // Polymarket search first instead of letting the general chat model say it
+  // has "no opinion". Examples: "will Argentina win the World Cup?", "can X
+  // happen", "odds of Y", "is Z likely".
+  if (/(\bwill\b|\bcan\b|\bcould\b|\bwould\b|\bis\b|\bare\b|\bdo\b|\bdoes\b|\bodds? of\b|\bprobability of\b|\bchance of\b|\blikely\b|\bwin\b|\bhappen\b|\bresign\b|\belected\b|\bapprove\b|\brelease\b|\blaunch\b)/i.test(t) && /[?？]|\bwin\b|\bhappen\b|\blikely\b/i.test(t)) {
+    return { action: 'analyze', reference: t };
+  }
+
   return null;
 }
 
@@ -97,10 +105,9 @@ async function resolveTarget(chatId, intent) {
   }
   if (intent.reference) {
     const { market, candidates } = await polymarket.resolveMarket(intent.reference);
-    if (!market) return { error: `Couldn't find a market for “${oneLine(intent.reference, 60)}”. Try /scan or paste a Polymarket link.` };
     // If the text search was ambiguous, remember the candidate list too.
     if (candidates.length > 1) s.lastScan = candidates;
-    return { market, candidates };
+    return { market: market || null, candidates, reference: intent.reference };
   }
   // Default: re-analyze the last market.
   if (s.lastMarket) return { market: s.lastMarket };
@@ -110,6 +117,11 @@ async function resolveTarget(chatId, intent) {
 async function doAnalyze(chatId, intent) {
   const target = await resolveTarget(chatId, intent);
   if (target.error) return target.error;
+
+  if (!target.market && target.reference) {
+    return doNoMarketResearch(chatId, target.reference);
+  }
+
   const market = target.market;
   const s = session(chatId);
   s.lastMarket = market;
@@ -134,7 +146,30 @@ async function doAnalyze(chatId, intent) {
       evidence: decision.keyFactors,
     });
   }
-  return render.renderDecision(market, decision);
+  return render.renderDecision(market, decision, target.candidates || []);
+}
+
+async function doNoMarketResearch(chatId, question) {
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        'You are PolyEdge, a Polymarket-first prediction analyst.',
+        'No matching active Polymarket market was found for the user question, but you should still answer usefully.',
+        'Give a concise probabilistic take from general knowledge/base rates. Do not claim live web access or live odds.',
+        'Return ONLY JSON with keys: probability (0-100 or null), confidence (low/medium/high), answer (2-4 sentences), key_factors (3-5 short strings), what_to_watch (1-3 short strings).',
+      ].join('\n'),
+    },
+    { role: 'user', content: String(question).slice(0, 800) },
+  ];
+
+  let assessment;
+  try {
+    assessment = await chatJson(messages, { maxTokens: 900, temperature: 0.35 });
+  } catch (err) {
+    return render.renderNoMarketAnswer(question, { error: err.message });
+  }
+  return render.renderNoMarketAnswer(question, assessment);
 }
 
 async function doPaperBuy(chatId, intent) {
@@ -236,7 +271,8 @@ async function doChat(chatId, text) {
         'You are PolyEdge, a friendly, sharp assistant for Polymarket trading decisions.',
         'You can: scan trending markets, analyze a market into a BUY YES / BUY NO / NO-TRADE decision',
         'with confidence + reasoning, and log paper trades for self-evaluation.',
-        'Keep replies short (3-6 lines), concrete, and conversational. Use plain text.',
+        'Keep replies short (3-6 lines), concrete, and conversational.',
+        'Use Telegram-friendly Markdown sparingly (**bold**, bullets, emojis); never leave broken/raw formatting.',
         'If the user seems to want a decision or to find markets, nudge them: "Try /scan" or',
         '"send me a market name or Polymarket link and I\'ll analyze it." Never invent live prices —',
         'tell them to analyze a specific market for real numbers.',
@@ -246,7 +282,7 @@ async function doChat(chatId, text) {
     { role: 'user', content: text },
   ];
   const reply = await chat(messages, { maxTokens: 700, temperature: 0.6 });
-  return reply || 'I’m here. Try /scan to see live markets, or send me a market to analyze.';
+  return reply ? render.renderChat(reply) : 'I’m here. Try /scan to see live markets, or send me a market to analyze.';
 }
 
 const HELP = [

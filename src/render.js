@@ -32,20 +32,22 @@ const REC_BADGE = {
 };
 
 // The decision card — the product's core output.
-function renderDecision(market, d) {
+function renderDecision(market, d, candidates = []) {
   if (d.error) return `⚠️ ${escapeHtml(d.error)}`;
 
   const badge = REC_BADGE[d.recommendation] || escapeHtml(d.recommendation);
   const edgeSign = d.edgePct > 0 ? '+' : '';
+  const marketLink = market.url ? `<a href="${escapeHtml(market.url)}">Open Polymarket ↗</a>` : '';
   const lines = [
     `📊 <b>${escapeHtml(oneLine(market.question, 140))}</b>`,
+    marketLink ? `🔗 ${marketLink}` : '',
     '',
     `${badge}  ·  confidence: <b>${escapeHtml(d.confidence)}</b> (${d.confidencePct}%)`,
-    '',
+    '──────────',
     `• Market implied: <b>${d.marketProbPct}%</b> YES <i>(${d.priceSource})</i>`,
     `• PolyEdge fair: <b>${d.fairProbPct}%</b> YES`,
     `• Edge: <b>${edgeSign}${d.edgePct}%</b>  (threshold ±${d.threshold}%)`,
-  ];
+  ].filter(line => line !== '');
   if (d.side && d.evPct != null) lines.push(`• Est. value on ${d.side}: <b>${d.evPct > 0 ? '+' : ''}${d.evPct}%</b>`);
   lines.push('');
 
@@ -57,12 +59,55 @@ function renderDecision(market, d) {
   }
   if (d.knowledgeLimit) lines.push(`⚠️ <i>${escapeHtml(oneLine(d.knowledgeLimit, 200))}</i>`, '');
 
+  if (candidates.length > 1) {
+    lines.push('<b>Other matching markets</b>');
+    candidates.slice(1, 4).forEach((m, i) => lines.push(`${i + 2}. ${escapeHtml(oneLine(m.question, 90))}`));
+    lines.push('');
+  }
+
   if (d.recommendation === 'NO-TRADE') {
     lines.push('No clear edge — sitting out is the call.');
   } else if (d.side) {
     lines.push(`💵 Paper-trade it: <code>paper buy ${d.side.toLowerCase()} 100</code>`);
   }
   lines.push('', '<i>Not financial advice. Paper trading only.</i>');
+  return lines.join('\n');
+}
+
+function renderNoMarketAnswer(question, a = {}) {
+  if (a.error) {
+    return [
+      '🔎 <b>No active Polymarket market found</b>',
+      '',
+      `<b>Question:</b> ${escapeHtml(oneLine(question, 160))}`,
+      '',
+      `⚠️ I could not generate a fallback answer: ${escapeHtml(oneLine(a.error, 180))}`,
+      '',
+      'Try rephrasing with the team/person/event name, or send a Polymarket link if you have one.',
+    ].join('\n');
+  }
+
+  const prob = Number(a.probability);
+  const hasProb = Number.isFinite(prob) && prob >= 0 && prob <= 100;
+  const lines = [
+    '🔎 <b>No active Polymarket market found</b>',
+    '',
+    `<b>Question:</b> ${escapeHtml(oneLine(question, 160))}`,
+    hasProb ? `🎯 <b>My rough take:</b> ${Math.round(prob * 10) / 10}% YES · confidence: <b>${escapeHtml(a.confidence || 'low')}</b>` : `🎯 <b>My rough take:</b> confidence: <b>${escapeHtml(a.confidence || 'low')}</b>`,
+    '──────────',
+  ];
+  if (a.answer) lines.push(`🧠 ${mdToHtml(a.answer)}`, '');
+  if (Array.isArray(a.key_factors) && a.key_factors.length) {
+    lines.push('<b>Key factors</b>');
+    a.key_factors.slice(0, 5).forEach(f => lines.push(`• ${escapeHtml(oneLine(f, 160))}`));
+    lines.push('');
+  }
+  if (Array.isArray(a.what_to_watch) && a.what_to_watch.length) {
+    lines.push('<b>What to watch</b>');
+    a.what_to_watch.slice(0, 3).forEach(f => lines.push(`• ${escapeHtml(oneLine(f, 160))}`));
+    lines.push('');
+  }
+  lines.push('If a Polymarket market appears later, send me the link or ask again and I’ll analyze the live price/edge.');
   return lines.join('\n');
 }
 
@@ -78,6 +123,10 @@ function renderPositions(trades) {
   });
   lines.push('', 'Close one with <code>close #ID</code> once it resolves.');
   return lines.join('\n');
+}
+
+function renderChat(text) {
+  return mdToHtml(text);
 }
 
 function renderResults(trades, bankroll) {
@@ -106,4 +155,4 @@ function renderResults(trades, bankroll) {
   return lines.join('\n');
 }
 
-module.exports = { renderMarketList, renderDecision, renderPositions, renderResults, money, priceLine };
+module.exports = { renderMarketList, renderDecision, renderNoMarketAnswer, renderChat, renderPositions, renderResults, money, priceLine };
