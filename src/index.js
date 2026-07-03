@@ -15,6 +15,7 @@ async function main() {
     { command: 'positions', description: 'Open paper positions' },
     { command: 'results', description: 'Paper-trading scorecard' },
     { command: 'why', description: 'Reasoning behind the last call' },
+    { command: 'update', description: 'Update to the latest GitHub version' },
     { command: 'help', description: 'How to use PolyEdge' },
   ]).catch(() => {});
 
