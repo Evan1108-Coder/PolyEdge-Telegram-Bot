@@ -66,6 +66,25 @@ function migrate(database) {
       closed_at TEXT,
       FOREIGN KEY(analysis_id) REFERENCES analyses(id) ON DELETE SET NULL
     );
+
+    -- Opt-in background watches (Feature 2): "ping me when this market crosses
+    -- 60%" / "when it resolves". Persisted so a restart resumes them.
+    CREATE TABLE IF NOT EXISTS watches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id TEXT NOT NULL,
+      label TEXT NOT NULL,
+      check_kind TEXT NOT NULL,
+      params_json TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'active',
+      polls_done INTEGER NOT NULL DEFAULT 0,
+      max_polls INTEGER NOT NULL DEFAULT 20,
+      interval_ms INTEGER NOT NULL DEFAULT 5000,
+      deadline_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      finished_at TEXT,
+      result TEXT
+    );
   `);
 }
 

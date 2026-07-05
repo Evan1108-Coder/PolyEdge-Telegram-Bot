@@ -1,9 +1,12 @@
-const { Bot } = require('grammy');
+const { Bot, InlineKeyboard } = require('grammy');
 const { getConfig } = require('./config');
-const { handleMessage, HELP } = require('./agent');
+const { handleMessage, HELP, detectWatchRequest } = require('./agent');
 const { sendLong, escapeHtml } = require('./utils/format');
 const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
+const { classifyComplexity, StagedStatus, STAGES } = require('./utils/staged');
+const { runWithDeadline, DeadlineError } = require('./utils/guard');
+const { getWatchManager } = require('./watch-setup');
 const { execSync } = require('child_process');
 
 // pm2 process name to restart after a successful self-update.
@@ -34,6 +37,13 @@ function createBot(token) {
   bot.command('analyze', async ctx => {
     const arg = (ctx.match || '').trim();
     return runHandler(ctx, arg ? `analyze ${arg}` : 'analyze');
+  });
+  bot.command('watches', ctx => showWatches(ctx));
+
+  bot.on('callback_query:data', async ctx => {
+    const data = ctx.callbackQuery.data || '';
+    if (data.startsWith('watch:')) return handleWatchCallback(ctx);
+    return ctx.answerCallbackQuery();
   });
 
   let updateInProgress = false;
@@ -107,12 +117,34 @@ function createBot(token) {
   bot.on('message:text', async ctx => {
     const text = buildMessageContext(ctx);
     if (!text) return;
+
+    // Quick watch-management phrases handled inline (no model, no work).
+    if (/^(watches|show watches|list watches|what am i watching)\??$/i.test(text.trim())) {
+      return showWatches(ctx);
+    }
+    const stopMatch = text.match(/\b(?:stop|cancel)\s+watch(?:ing)?\s*#?(\d+)/i);
+    if (stopMatch) {
+      getWatchManager({ api: ctx.api }).stopWatch(Number(stopMatch[1]));
+      return sendLong(ctx, `⏹️ <b>Stopped watch #${stopMatch[1]}.</b>`);
+    }
+
     return runHandler(ctx, text);
   });
 
   bot.catch(err => {
     console.error('[Bot] Error:', err.error?.message || err.message);
   });
+
+  // Bring opt-in background watches back after a restart. Any watch whose
+  // deadline passed while the bot was down is closed out (and the user told),
+  // so nothing is silently lost — and none of this blocks startup.
+  try {
+    const wm = getWatchManager(bot);
+    const { resumed } = wm.resumeWatches();
+    if (resumed) console.log(`[Watch] Resumed ${resumed} active watch${resumed === 1 ? '' : 'es'}.`);
+  } catch (err) {
+    console.error('[Watch] resume failed:', err.message);
+  }
 
   return bot;
 }
@@ -121,13 +153,98 @@ async function runHandler(ctx, text) {
   const replyOptions = ctx.message?.message_id
     ? { reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true } }
     : {};
+
+  // Feature 2 (opt-in watch): "watch this market / alert me when it hits 60%".
+  // We OFFER to watch in the background and only start if the user taps yes.
   try {
-    const reply = await withTyping(ctx, () => handleMessage(ctx.chat.id, text));
+    const watchIntent = await detectWatchRequest(ctx.chat.id, text);
+    if (watchIntent) return offerWatch(ctx, watchIntent);
+  } catch (err) {
+    console.error('[watch-intent]', err.message);
+  }
+
+  // Feature 1 — complexity-gated status. A hello / thanks / short question gets
+  // an instant reply with NO status line; a real request (scan / analyze /
+  // trade) shows a single edit-in-place trail while the work runs.
+  const { complex } = classifyComplexity(text);
+  const staged = complex ? new StagedStatus(ctx) : null;
+  if (staged) await staged.stage(STAGES.thinking);
+
+  try {
+    // Feature 2 — hard wall-clock deadline around the whole handler. Polymarket
+    // or the model hanging can never freeze the chat; it ends as "took too long".
+    const budgetMs = Number(process.env.HANDLER_TIMEOUT_MS || 90000);
+    const reply = await runWithDeadline(
+      () => withTyping(ctx, () => handleMessage(ctx.chat.id, text)),
+      budgetMs,
+      { label: 'request' }
+    );
+    if (staged) await staged.done();
     return sendLong(ctx, reply, replyOptions);
   } catch (err) {
     console.error('[handler]', err.message);
+    if (err instanceof DeadlineError) {
+      if (staged) { await staged.tooLong('Polymarket/model took longer than the time budget.'); return; }
+      return sendLong(ctx, '⏱️ <b>That took too long.</b>\nI stopped waiting so the chat doesn’t freeze. Try again, or narrow the request.', replyOptions);
+    }
+    if (staged) { await staged.cant(friendlyError(err).replace(/<[^>]+>/g, '')); return; }
     return sendLong(ctx, friendlyError(err), replyOptions);
   }
+}
+
+// OFFER to watch (opt-in). Shows the current state and asks; the background
+// watch only starts if the user taps "Yes, keep watching".
+async function offerWatch(ctx, intent) {
+  const token = `${intent.kind}:${Buffer.from(JSON.stringify({ p: intent.params, l: intent.label })).toString('base64url').slice(0, 3500)}`;
+  const keyboard = new InlineKeyboard()
+    .text('👀 Yes, keep watching', `watch:start:${token}`)
+    .text('❌ No thanks', 'watch:decline');
+  return ctx.reply(
+    `⏳ <b>Not there yet.</b>\nI can keep an eye on ${escapeHtml(intent.label)} in the background and ping you the moment it happens — you can keep chatting meanwhile. Want me to?`,
+    { parse_mode: 'HTML', reply_markup: keyboard }
+  );
+}
+
+async function showWatches(ctx) {
+  const wm = getWatchManager();
+  const rows = wm.listWatches(ctx.chat.id);
+  if (!rows.length) return sendLong(ctx, '👀 <b>No watches.</b>\nAnalyze a market, then say “watch it and tell me when it crosses 60%”.');
+  const lines = ['👀 <b>Watches</b>'];
+  for (const r of rows) {
+    const icon = r.status === 'active' ? '🟢' : r.status === 'fired' ? '✅' : r.status === 'timed_out' ? '⏳' : r.status === 'stopped' ? '⏹️' : '⚪';
+    lines.push(`${icon} #${r.id} — ${escapeHtml(r.label)} <i>(${escapeHtml(r.status)}, ${r.polls_done} check${r.polls_done === 1 ? '' : 's'})</i>`);
+  }
+  lines.push('\nStop one with “stop watch #<id>”.');
+  return sendLong(ctx, lines.join('\n'));
+}
+
+async function handleWatchCallback(ctx) {
+  const data = ctx.callbackQuery?.data || '';
+  const [, action, ...rest] = data.split(':');
+  if (action === 'decline') {
+    await ctx.answerCallbackQuery('No problem.');
+    try { await ctx.editMessageText('👍 Okay, I won’t watch it. Ask any time.', { parse_mode: 'HTML' }); } catch {}
+    return;
+  }
+  if (action === 'start') {
+    const tok = rest.join(':');
+    const kind = tok.split(':')[0];
+    const encoded = tok.slice(kind.length + 1);
+    let spec;
+    try { spec = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); }
+    catch { await ctx.answerCallbackQuery('That watch offer expired.'); return; }
+    const wm = getWatchManager({ api: ctx.api });
+    try {
+      const { id } = wm.startWatch({ chatId: ctx.chat.id, label: spec.l, kind, params: spec.p });
+      await ctx.answerCallbackQuery('Watching in the background.');
+      try { await ctx.editMessageText(`👀 <b>Watching (#${id}).</b>\nI’ll ping you the moment ${escapeHtml(spec.l)} — keep chatting, I’m on it. Stop with “stop watch #${id}”.`, { parse_mode: 'HTML' }); } catch {}
+    } catch (err) {
+      await ctx.answerCallbackQuery('Could not start.');
+      try { await ctx.editMessageText(`⚠️ ${escapeHtml(err.message)}`, { parse_mode: 'HTML' }); } catch {}
+    }
+    return;
+  }
+  return ctx.answerCallbackQuery();
 }
 
 // Fold Telegram-native context into the text the agent sees. This makes reply UX

@@ -5,6 +5,7 @@ const { analyzeMarket } = require('./decision/engine');
 const render = require('./render');
 const db = require('./db');
 const { oneLine, escapeHtml } = require('./utils/format');
+const { parseWatchIntent } = require('./watch-setup');
 
 // Per-chat conversational state (in-memory; fine for a single-process bot).
 // Lets "analyze 2" refer to the last /scan list and "paper buy yes 100" refer
@@ -14,6 +15,29 @@ function session(chatId) {
   const key = String(chatId);
   if (!sessions.has(key)) sessions.set(key, { lastScan: [], lastMarket: null, lastDecision: null });
   return sessions.get(key);
+}
+
+// Feature 2 (opt-in watch): if the message is a "watch/alert me when…" request,
+// resolve it against the user's last analyzed market (or a market named/linked
+// in the text) and return a watch spec — WITHOUT starting anything. The bot
+// offers it; the watch only starts if the user opts in. Returns null when it
+// isn't a watch request or we can't resolve a market to watch.
+async function detectWatchRequest(chatId, text) {
+  if (!/\b(watch|monitor|keep an eye|let me know when|notify me when|tell me when|ping me when|alert me when)\b/i.test(text)) {
+    return null;
+  }
+  const s = session(chatId);
+  let market = s.lastMarket;
+  // If the text references a specific market (link/name), prefer that.
+  const ref = /polymarket\.com\//i.test(text)
+    ? text
+    : (text.match(/(?:watch|monitor|for|on)\s+(.{4,80})/i)?.[1] || '').trim();
+  if (ref) {
+    const resolved = await polymarket.resolveMarket(ref).catch(() => ({ market: null }));
+    if (resolved.market) market = resolved.market;
+  }
+  if (!market) return null;
+  return parseWatchIntent(text, market);
 }
 
 // ---- Intent routing -------------------------------------------------------
@@ -325,4 +349,4 @@ async function handleMessage(chatId, text) {
   return reply;
 }
 
-module.exports = { handleMessage, HELP, fastIntent };
+module.exports = { handleMessage, HELP, fastIntent, detectWatchRequest, session };
