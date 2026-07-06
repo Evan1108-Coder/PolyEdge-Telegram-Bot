@@ -6,6 +6,7 @@ const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
 const { classifyComplexity, StagedStatus, STAGES } = require('./utils/staged');
 const { runWithDeadline, DeadlineError } = require('./utils/guard');
+const { createBusyState } = require('./utils/busy');
 const { getWatchManager } = require('./watch-setup');
 const { execSync } = require('child_process');
 
@@ -15,6 +16,7 @@ const PM2_NAME = process.env.PM2_PROCESS_NAME || 'polyedge-bot';
 function createBot(token) {
   const bot = new Bot(token);
   const ownerId = getConfig().telegramOwnerId;
+  const busyState = createBusyState();
 
   // Optional single-user lock: if TELEGRAM_OWNER_ID is set, ignore everyone else.
   bot.use(async (ctx, next) => {
@@ -29,7 +31,10 @@ function createBot(token) {
 
   // Thin command wrappers — they all funnel through the same NL handler so the
   // behaviour is identical whether the user types /scan or "scan the markets".
-  const route = phrase => async ctx => runHandler(ctx, phrase);
+  const route = phrase => async ctx => {
+    if (busyState.busy(ctx.chat.id)) return busyState.handleWhileBusy(ctx, phrase, { reply: message => sendLong(ctx, escapeHtml(message)) });
+    return runHandler(ctx, phrase, { busyState });
+  };
   bot.command('scan', route('scan'));
   bot.command('positions', route('positions'));
   bot.command('results', route('results'));
@@ -128,7 +133,12 @@ function createBot(token) {
       return sendLong(ctx, `⏹️ <b>Stopped watch #${stopMatch[1]}.</b>`);
     }
 
-    return runHandler(ctx, text);
+    if (busyState.busy(ctx.chat.id)) {
+      const handled = await busyState.handleWhileBusy(ctx, text, { reply: message => sendLong(ctx, escapeHtml(message)) });
+      if (handled) return;
+    }
+
+    return runHandler(ctx, text, { busyState });
   });
 
   bot.catch(err => {
@@ -149,16 +159,23 @@ function createBot(token) {
   return bot;
 }
 
-async function runHandler(ctx, text) {
+async function runHandler(ctx, text, options = {}) {
   const replyOptions = ctx.message?.message_id
     ? { reply_parameters: { message_id: ctx.message.message_id, allow_sending_without_reply: true } }
     : {};
+
+  const busyState = options.busyState || null;
+  const taskLabel = makeTaskLabel(text);
+  if (busyState) busyState.start(ctx.chat.id, { label: taskLabel, stage: 'working', detail: 'I can still answer questions about this task state.' });
 
   // Feature 2 (opt-in watch): "watch this market / alert me when it hits 60%".
   // We OFFER to watch in the background and only start if the user taps yes.
   try {
     const watchIntent = await detectWatchRequest(ctx.chat.id, text);
-    if (watchIntent) return offerWatch(ctx, watchIntent);
+    if (watchIntent) {
+      if (busyState) busyState.finish(ctx.chat.id);
+      return offerWatch(ctx, watchIntent);
+    }
   } catch (err) {
     console.error('[watch-intent]', err.message);
   }
@@ -174,6 +191,7 @@ async function runHandler(ctx, text) {
     // Feature 2 — hard wall-clock deadline around the whole handler. Polymarket
     // or the model hanging can never freeze the chat; it ends as "took too long".
     const budgetMs = Number(process.env.HANDLER_TIMEOUT_MS || 90000);
+    if (busyState) busyState.update(ctx.chat.id, { stage: staged ? 'running staged progress' : 'working' });
     const reply = await runWithDeadline(
       () => withTyping(ctx, () => handleMessage(ctx.chat.id, text)),
       budgetMs,
@@ -189,7 +207,17 @@ async function runHandler(ctx, text) {
     }
     if (staged) { await staged.cant(friendlyError(err).replace(/<[^>]+>/g, '')); return; }
     return sendLong(ctx, friendlyError(err), replyOptions);
+  } finally {
+    if (busyState) busyState.finish(ctx.chat.id);
   }
+}
+
+function makeTaskLabel(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (/\b(scan|market|markets)\b/i.test(t)) return 'the market scan';
+  if (/\b(position|positions|portfolio)\b/i.test(t)) return 'the positions check';
+  if (/\b(analy[sz]e|why|decision|trade)\b/i.test(t)) return 'the market analysis';
+  return t ? `“${t.slice(0, 60)}${t.length > 60 ? '…' : ''}”` : 'your request';
 }
 
 // OFFER to watch (opt-in). Shows the current state and asks; the background
