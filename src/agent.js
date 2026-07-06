@@ -7,6 +7,7 @@ const db = require('./db');
 const { oneLine, escapeHtml } = require('./utils/format');
 const { parseWatchIntent } = require('./watch-setup');
 const { remember } = require('./utils/actionlog');
+const { isSelfContextQuery, selfContextText, renderSelfContext } = require('./self-context');
 
 // Per-chat conversational state (in-memory; fine for a single-process bot).
 // Lets "analyze 2" refer to the last /scan list and "paper buy yes 100" refer
@@ -294,6 +295,8 @@ async function doChat(chatId, text) {
       role: 'system',
       content: [
         'You are PolyEdge, a friendly, sharp assistant for Polymarket trading decisions.',
+        'Runtime self-context (use for ambiguous self-referential questions like latest version/who are you/what can you do):',
+        selfContextText(chatId),
         'You can: scan trending markets, analyze a market into a BUY YES / BUY NO / NO-TRADE decision',
         'with confidence + reasoning, and log paper trades for self-evaluation.',
         'Keep replies short (3-6 lines), concrete, and conversational.',
@@ -330,6 +333,12 @@ const HELP = [
 
 async function handleMessage(chatId, text) {
   db.addConversation(chatId, 'user', text);
+  if (isSelfContextQuery(text)) {
+    const reply = renderSelfContext(chatId);
+    remember(chatId, { action: 'answered self-context query', evidence: text.slice(0, 160), result: reply.replace(/<[^>]+>/g, '').slice(0, 300), version: require('../package.json').version, model: getConfig().minimaxModel || 'configured model', cost: 'none' });
+    db.addConversation(chatId, 'assistant', reply.replace(/<[^>]+>/g, ''));
+    return reply;
+  }
   let intent = fastIntent(text);
   if (!intent) intent = await classifyIntent(text);
 
