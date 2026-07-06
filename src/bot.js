@@ -4,7 +4,7 @@ const { handleMessage, HELP, detectWatchRequest } = require('./agent');
 const { sendLong, escapeHtml } = require('./utils/format');
 const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
-const { classifyComplexity, StagedStatus, STAGES } = require('./utils/staged');
+const { classifyComplexity, StagedStatus, STAGES, openingStage } = require('./utils/staged');
 const { runWithDeadline, DeadlineError } = require('./utils/guard');
 const { createBusyState } = require('./utils/busy');
 const { remember, evidenceSummary } = require('./utils/actionlog');
@@ -186,7 +186,7 @@ async function runHandler(ctx, text, options = {}) {
   // trade) shows a single edit-in-place trail while the work runs.
   const { complex } = classifyComplexity(text);
   const staged = complex ? new StagedStatus(ctx) : null;
-  if (staged) await staged.stage(STAGES.thinking);
+  if (staged) await staged.stage(openingStage(text));
 
   try {
     // Feature 2 — hard wall-clock deadline around the whole handler. Polymarket

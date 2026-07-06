@@ -63,13 +63,11 @@ function classifyComplexity(text, hints = {}) {
   if (GREETING_RE.test(t)) return { complex: false, reason: 'greeting' };
   if (THANKS_RE.test(t)) return { complex: false, reason: 'acknowledgement' };
 
+  if (looksLikeShortQuestion(t) && !COMPLEX_RE.test(t)) return { complex: false, reason: 'short question' };
   if (COMPLEX_RE.test(t)) return { complex: true, reason: 'action-like request' };
   // Multi-sentence / long messages usually carry a real task.
   if (t.length > 220) return { complex: true, reason: 'long request' };
-  if (looksLikeShortQuestion(t)) return { complex: false, reason: 'short question' };
-  // Default: medium-length, no clear action verb — treat as complex so the user
-  // still sees progress rather than a frozen chat. (Errs toward showing status.)
-  return { complex: true, reason: 'unclassified — showing progress to be safe' };
+  return { complex: false, reason: 'no concrete PolyEdge action detected' };
 }
 
 // --- Staged status message -----------------------------------------------------
@@ -190,6 +188,17 @@ function stripTags(s) {
 
 // Convenience: decide-and-create. Returns a StagedStatus only when the message
 // is complex; otherwise returns null (caller answers directly, no status line).
+function openingStage(text) {
+  const t = String(text || '');
+  if (/\b(scan|market|markets|find|search)\b/i.test(t)) return STAGES.scanning;
+  if (/\b(odds|price|probability|chance)\b/i.test(t)) return STAGES.pricing;
+  if (/\b(analy[sz]e|why|compare|edge)\b/i.test(t)) return STAGES.analyzing;
+  if (/\b(decide|buy|sell|trade|paper)\b/i.test(t)) return STAGES.deciding;
+  if (/\b(watch|monitor|track|alert|notify|until|resolve)\b/i.test(t)) return STAGES.planning;
+  const variants = [STAGES.thinking, STAGES.scanning, STAGES.analyzing, STAGES.deciding];
+  return variants[t.length % variants.length];
+}
+
 function maybeStaged(ctx, text, hints = {}) {
   const { complex, reason } = classifyComplexity(text, hints);
   if (!complex) return { staged: null, complex: false, reason };
@@ -201,4 +210,5 @@ module.exports = {
   classifyComplexity,
   StagedStatus,
   maybeStaged,
+  openingStage,
 };
