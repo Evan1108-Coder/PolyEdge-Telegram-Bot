@@ -1,3 +1,4 @@
+const { ack: variedAck } = require('./actionlog');
 const STATUS_RE = /\b(status|progress|what(?:'|’)?s happening|what are you doing|current task|are you done|how(?:'|’)?s it going|where are we|state|update)\b/i;
 const ACK_RE = /\b(ok|okay|got it|cool|thanks|thank you|sounds good|working on that|fine|great)\b/i;
 const STOP_RE = /\b(stop|cancel|abort|nevermind|never mind|forget it|drop it|scratch that)\b/i;
@@ -78,7 +79,7 @@ function createBusyState(opts = {}) {
       return true;
     }
     if (isAcknowledgement(text)) {
-      await reply(`Got it — I'm still working on ${label}.`);
+      await reply(`${variedAck(text)} Still on ${label}.`);
       return true;
     }
     if (isStopRequest(text)) {

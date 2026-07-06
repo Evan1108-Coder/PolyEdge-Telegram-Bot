@@ -19,7 +19,7 @@ test('busy state answers status/ack/new-task without starting more work', async 
   assert.equal(await busy.handleWhileBusy(ctx, 'status'), true);
   assert.match(replies.pop(), /market scan/);
   assert.equal(await busy.handleWhileBusy(ctx, 'ok thanks'), true);
-  assert.match(replies.pop(), /still working/);
+  assert.match(replies.pop(), /Still on/);
   assert.equal(await busy.handleWhileBusy(ctx, 'scan another market'), true);
   assert.match(replies.pop(), /can't start a new task yet/);
   assert.equal(busy.busy(123), true);

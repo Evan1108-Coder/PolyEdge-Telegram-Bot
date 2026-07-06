@@ -7,6 +7,7 @@ const { checkForUpdate, applyUpdate } = require('./update');
 const { classifyComplexity, StagedStatus, STAGES } = require('./utils/staged');
 const { runWithDeadline, DeadlineError } = require('./utils/guard');
 const { createBusyState } = require('./utils/busy');
+const { remember, evidenceSummary } = require('./utils/actionlog');
 const { getWatchManager } = require('./watch-setup');
 const { execSync } = require('child_process');
 
@@ -193,10 +194,11 @@ async function runHandler(ctx, text, options = {}) {
     const budgetMs = Number(process.env.HANDLER_TIMEOUT_MS || 90000);
     if (busyState) busyState.update(ctx.chat.id, { stage: staged ? 'running staged progress' : 'working' });
     const reply = await runWithDeadline(
-      () => withTyping(ctx, () => handleMessage(ctx.chat.id, text)),
+      () => withTyping(ctx, () => handleMessage(ctx.chat.id, text + `\n\n[Recent recorded actions for follow-up/status questions]\n${evidenceSummary(ctx.chat.id)}\nUse only actual checked evidence; do not invent market/tool results.`)),
       budgetMs,
       { label: 'request' }
     );
+    remember(ctx.chat.id, { action: 'handled PolyEdge request', evidence: text.slice(0, 160), result: String(reply).slice(0, 200) });
     if (staged) await staged.done();
     return sendLong(ctx, reply, replyOptions);
   } catch (err) {
