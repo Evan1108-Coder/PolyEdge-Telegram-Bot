@@ -6,6 +6,7 @@ const render = require('./render');
 const db = require('./db');
 const { oneLine, escapeHtml } = require('./utils/format');
 const { parseWatchIntent } = require('./watch-setup');
+const { remember } = require('./utils/actionlog');
 
 // Per-chat conversational state (in-memory; fine for a single-process bot).
 // Lets "analyze 2" refer to the last /scan list and "paper buy yes 100" refer
@@ -345,6 +346,7 @@ async function handleMessage(chatId, text) {
     default: reply = await doChat(chatId, text); break;
   }
 
+  remember(chatId, { action: `PolyEdge intent:${intent.action}`, evidence: JSON.stringify(intent).slice(0, 500), result: String(reply).replace(/<[^>]+>/g, '').slice(0, 320), version: require('../package.json').version, model: getConfig().minimaxModel || 'configured model', cost: 'not reported by provider/tool' });
   db.addConversation(chatId, 'assistant', String(reply).replace(/<[^>]+>/g, ''));
   return reply;
 }

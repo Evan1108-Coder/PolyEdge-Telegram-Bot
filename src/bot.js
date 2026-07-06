@@ -2,6 +2,7 @@ const { Bot, InlineKeyboard } = require('grammy');
 const { getConfig } = require('./config');
 const { handleMessage, HELP, detectWatchRequest } = require('./agent');
 const { sendLong, escapeHtml } = require('./utils/format');
+const { formatTelegramReply } = require('./utils/tgformat');
 const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
 const { classifyComplexity, StagedStatus, STAGES, openingStage } = require('./utils/staged');
@@ -198,9 +199,9 @@ async function runHandler(ctx, text, options = {}) {
       budgetMs,
       { label: 'request' }
     );
-    remember(ctx.chat.id, { action: 'handled PolyEdge request', evidence: text.slice(0, 160), result: String(reply).slice(0, 200) });
+    remember(ctx.chat.id, { action: 'handled PolyEdge request', evidence: text.slice(0, 260), result: String(reply).slice(0, 320), version: require('../package.json').version, actions: taskLabel, cost: 'not reported by provider/tool', terminal: '' });
     if (staged) await staged.done();
-    return sendLong(ctx, reply, replyOptions);
+    return sendLong(ctx, formatTelegramReply(reply, { title: 'PolyEdge result', emoji: '🎯' }), replyOptions);
   } catch (err) {
     console.error('[handler]', err.message);
     if (err instanceof DeadlineError) {
