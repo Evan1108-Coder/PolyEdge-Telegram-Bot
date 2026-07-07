@@ -25,6 +25,14 @@ function createBot(token) {
     if (ownerId && ctx.from && String(ctx.from.id) !== String(ownerId)) {
       return; // silently ignore non-owner
     }
+    const originalReply = ctx.reply.bind(ctx);
+    ctx.reply = async (text, options) => {
+      const plain = String(text || '').replace(/<[^>]+>/g, '').slice(0, 1200);
+      if (plain && ctx.chat?.id) {
+        remember(ctx.chat.id, { action: 'sent bot reply', evidence: plain, result: 'Recorded outgoing structured/command response for follow-up context.', version: require('../package.json').version, cost: 'none' });
+      }
+      return originalReply(text, options);
+    };
     return next();
   });
 
