@@ -8,6 +8,7 @@ const { oneLine, escapeHtml } = require('./utils/format');
 const { parseWatchIntent } = require('./watch-setup');
 const { remember } = require('./utils/actionlog');
 const { isSelfContextQuery, selfContextText, renderSelfContext } = require('./self-context');
+const { languagePolicy } = require('./utils/language');
 
 // Per-chat conversational state (in-memory; fine for a single-process bot).
 // Lets "analyze 2" refer to the last /scan list and "paper buy yes 100" refer
@@ -181,6 +182,7 @@ async function doNoMarketResearch(chatId, question) {
       role: 'system',
       content: [
         'You are PolyEdge, a Polymarket-first prediction analyst.',
+        languagePolicy(),
         'No matching active Polymarket market was found for the user question, but you should still answer usefully.',
         'Give a concise probabilistic take from general knowledge/base rates. Do not claim live web access or live odds.',
         'Return ONLY JSON with keys: probability (0-100 or null), confidence (low/medium/high), answer (2-4 sentences), key_factors (3-5 short strings), what_to_watch (1-3 short strings).',
@@ -295,6 +297,7 @@ async function doChat(chatId, text) {
       role: 'system',
       content: [
         'You are PolyEdge, a friendly, sharp assistant for Polymarket trading decisions.',
+        languagePolicy(),
         'Runtime self-context (use for ambiguous self-referential questions like latest version/who are you/what can you do):',
         selfContextText(chatId),
         'You can: scan trending markets, analyze a market into a BUY YES / BUY NO / NO-TRADE decision',

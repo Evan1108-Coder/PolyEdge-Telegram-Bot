@@ -1,5 +1,6 @@
 const { getConfig } = require('../config');
 const { chatJson } = require('../llm/minimax');
+const { languagePolicy } = require('../utils/language');
 const { getMidpoint } = require('../polymarket/client');
 
 // How much we trust the LLM's disagreement with the market. The market price is
@@ -29,6 +30,7 @@ function buildMessages(market, marketProb) {
 
   const system = [
     'You are PolyEdge, a sharp, disciplined prediction-market analyst.',
+    languagePolicy(),
     'Your job: estimate the TRUE probability that a Polymarket question resolves YES,',
     'reasoning independently from evidence and base rates — do NOT simply repeat the market price.',
     'Be calibrated and honest about uncertainty. If you have no real edge, say so.',
