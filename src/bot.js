@@ -71,6 +71,7 @@ function createBot(token) {
 
       if (!info.available) {
         const v = info.localVersion ? ` (v${escapeHtml(info.localVersion)})` : '';
+        remember(ctx.chat.id, { action: 'checked /update command', evidence: `local=${info.localVersion || info.local || 'unknown'} remote=${info.remoteVersion || info.remote || 'unknown'}`, result: 'Already on latest version; no update applied.', version: require('../package.json').version, cost: 'none' });
         return sendLong(ctx, `✅ <b>Already on the latest version${v}.</b>\nNothing to update.`);
       }
 
@@ -85,8 +86,10 @@ function createBot(token) {
         '\nApplying now — I’ll health-check the new code and roll back automatically if it fails to start.',
       ].filter(Boolean).join('\n'));
 
+      remember(ctx.chat.id, { action: 'found available /update', evidence: `${verPart}; changelog=${(info.changelog || []).slice(0, 8).join(' | ')}`, result: 'Applying update with health check.', version: require('../package.json').version, cost: 'none' });
       const result = applyUpdate();
       if (!result.ok) {
+        remember(ctx.chat.id, { action: 'failed /update command', evidence: `stage=${result.stage || 'unknown'} message=${result.message || 'unknown'}`, result: result.rolledBack ? 'Update failed and rolled back.' : 'Update failed before completion.', version: require('../package.json').version, cost: 'none' });
         const rolled = result.rolledBack
           ? '\n\n↩️ <b>Rolled back</b> to the previous working version — the bot is still running the old code.'
           : '';
@@ -102,6 +105,7 @@ function createBot(token) {
       const integrityPart = result.dataIntegrity
         ? `\n<b>Data integrity:</b> ${result.dataIntegrity.ok ? '✅ all user data untouched' : '⚠️ mismatch'} (checked ${result.dataIntegrity.checked.length} file${result.dataIntegrity.checked.length === 1 ? '' : 's'}).`
         : '';
+      remember(ctx.chat.id, { action: 'completed /update command', evidence: `prev=${result.prevHead || 'unknown'} new=${result.newHead || 'unknown'} files=${(result.filesChanged || []).map(f => `${f.status} ${f.file}`).join(', ')}`, result: `Updated successfully${result.remoteVersion ? ` to ${result.remoteVersion}` : ''}; restarting.`, version: require('../package.json').version, cost: 'none' });
       await sendLong(ctx, [
         `✅ <b>Updated successfully!</b> ${escapeHtml((result.prevHead || '').slice(0, 7))} → ${escapeHtml((result.newHead || '').slice(0, 7))}`,
         result.depsInstalled ? '📦 Dependencies were reinstalled.' : '',
