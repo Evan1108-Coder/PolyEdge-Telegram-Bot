@@ -5,6 +5,7 @@ const { sendLong, escapeHtml } = require('./utils/format');
 const { formatTelegramReply } = require('./utils/tgformat');
 const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
+const { classifyFile, downloadTelegramFile, extractText, getSupportedExtensions, imageCapabilityMessage, unsupportedFileMessage } = require('./files');
 const { classifyComplexity, StagedStatus, STAGES, openingStage } = require('./utils/staged');
 const { runWithDeadline, DeadlineError } = require('./utils/guard');
 const { createBusyState } = require('./utils/busy');
@@ -130,6 +131,36 @@ function createBot(token) {
       }, 1000);
     } finally {
       updateInProgress = false;
+    }
+  });
+
+  bot.on(['message:document', 'message:photo'], async ctx => {
+    const msg = ctx.message || {};
+    let fileId;
+    let fileName;
+    if (msg.document) {
+      fileId = msg.document.file_id;
+      fileName = msg.document.file_name || 'file';
+    } else if (msg.photo) {
+      const largest = msg.photo[msg.photo.length - 1];
+      fileId = largest.file_id;
+      fileName = 'photo.jpg';
+    }
+    const type = classifyFile(fileName) || (msg.photo ? { kind: 'image', ext: '.jpg' } : null);
+    if (!type) return sendLong(ctx, escapeHtml(unsupportedFileMessage(fileName)));
+    const caption = msg.caption || 'Analyze this upload.';
+    try {
+      const localPath = await downloadTelegramFile(ctx.api, fileId, fileName);
+      if (type.kind === 'image') {
+        return sendLong(ctx, escapeHtml(imageCapabilityMessage(fileName)));
+      }
+      const text = await extractText(localPath, fileName);
+      if (!text.trim()) return sendLong(ctx, `⚠️ <b>I couldn’t extract readable text from ${escapeHtml(fileName)}.</b>\nIt may be scanned, encrypted, empty, or malformed. Supported uploads: ${escapeHtml(getSupportedExtensions().join(', '))}.`);
+      const prompt = `[Uploaded file: ${fileName}]\n${text.slice(0, 12000)}\n\nUser request: ${caption}`;
+      return runHandler(ctx, prompt, { busyState });
+    } catch (err) {
+      console.error('[file]', err.message);
+      return sendLong(ctx, `⚠️ <b>I couldn’t process ${escapeHtml(fileName)}.</b>\n${escapeHtml(err.message || 'Unknown file error.')}\nSupported uploads: ${escapeHtml(getSupportedExtensions().join(', '))}.`);
     }
   });
 
