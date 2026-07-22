@@ -5,7 +5,7 @@ const { sendLong, escapeHtml } = require('./utils/format');
 const { formatTelegramReply } = require('./utils/tgformat');
 const { withTyping, friendlyError } = require('./utils/ux');
 const { checkForUpdate, applyUpdate } = require('./update');
-const { classifyFile, downloadTelegramFile, extractText, getSupportedExtensions, imageCapabilityMessage, unsupportedFileMessage } = require('./files');
+const { classifyFile, downloadTelegramFile, extractText, getSupportedExtensions, imageCapabilityMessage, unsupportedFileMessage, voiceCapabilityMessage, unsupportedAttachmentMessage } = require('./files');
 const { classifyComplexity, StagedStatus, STAGES, openingStage } = require('./utils/staged');
 const { runWithDeadline, DeadlineError } = require('./utils/guard');
 const { createBusyState } = require('./utils/busy');
@@ -132,6 +132,16 @@ function createBot(token) {
     } finally {
       updateInProgress = false;
     }
+  });
+
+  bot.on('message:voice', ctx => sendLong(ctx, escapeHtml(voiceCapabilityMessage())));
+
+  bot.on(['message:audio', 'message:video', 'message:video_note', 'message:animation'], ctx => {
+    const kind = ctx.message.audio ? 'audio file'
+      : ctx.message.video ? 'video'
+        : ctx.message.video_note ? 'video message'
+          : 'animation';
+    return sendLong(ctx, escapeHtml(unsupportedAttachmentMessage(kind)));
   });
 
   bot.on(['message:document', 'message:photo'], async ctx => {

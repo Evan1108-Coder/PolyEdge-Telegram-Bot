@@ -78,4 +78,12 @@ function imageCapabilityMessage(fileName) {
   return `I received ${fileName || 'the image'}, but this PolyEdge runtime is currently connected to a text-only MiniMax chat model, so I can’t honestly inspect pixels yet. Send a text/PDF/RTF file or switch this bot to a vision-capable provider before asking for image analysis.`;
 }
 
-module.exports = { classifyFile, getSupportedExtensions, downloadTelegramFile, extractText, getImageBase64, getMimeType, stripRtf, unsupportedFileMessage, imageCapabilityMessage };
+function voiceCapabilityMessage() {
+  return 'I received your voice message, but PolyEdge cannot transcribe audio yet. Please send the request as text; I won’t guess at audio I cannot hear.';
+}
+
+function unsupportedAttachmentMessage(kind = 'attachment') {
+  return `I received the ${kind}, but PolyEdge cannot process that attachment type yet. Please send text or one of these supported uploads: ${getSupportedExtensions().join(', ')}.`;
+}
+
+module.exports = { classifyFile, getSupportedExtensions, downloadTelegramFile, extractText, getImageBase64, getMimeType, stripRtf, unsupportedFileMessage, imageCapabilityMessage, voiceCapabilityMessage, unsupportedAttachmentMessage };
